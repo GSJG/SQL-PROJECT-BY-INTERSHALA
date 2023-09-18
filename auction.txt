@@ -1,0 +1,575 @@
+--table 1
+
+drop table matches;
+CREATE TABLE matches (
+	match_id int,
+city varchar,
+date date,
+player_of_match varchar,
+venue varchar,
+neutral_venue int,
+	team1 varchar,
+team2 varchar,
+toss_winner varchar,
+toss_decision varchar,
+winner varchar,
+result_mode varchar,
+result_margin int,
+eliminatir varchar,
+method_dl varchar,
+umpire1 varchar,
+umpire2 varchar
+
+);
+
+
+--table 2 
+drop table balls;
+CREATE TABLE balls(
+	match_id int,
+	inning int,
+	over int,
+	ball int,
+	batsman varchar,
+	non_striker varchar,
+	bowler varchar,
+	batsman_runs int,
+	extra_runs int,
+	total_runs int,
+	is_wicket int,
+	dismissal_kind varchar,
+	player_dismessed varchar,
+	fielder varchar,
+	extras_type varchar,
+	batting_team varchar,
+	bowling_team varchar
+);
+
+
+--copy data
+copy matches from'C:\Program Files\PostgreSQL\10\data\IPL Dataset\IPL_matches.csv'  CSV header;
+
+copy balls from'C:\Program Files\PostgreSQL\10\data\IPL Dataset\IPL_Ball.csv'  CSV header;
+
+
+
+
+select * from matches
+select * from balls
+
+
+
+/*Task1
+Your first priority is to get 2-3 players with high S.R who have faced at least 500 balls.
+And to do that you have to make a list of 10 players you want to bid in the auction so that when 
+you try to grab them in auction you should not pay the amount greater than you have in the purse 
+for a particular player.*/
+
+-- Create Aggressive_batsman table
+CREATE TABLE Aggressive_batsman AS
+SELECT batsman,
+       SUM(batsman_runs) AS run_count,
+       COUNT(ball) AS tot_balls_faced,
+       COUNT(ball) FILTER (WHERE batsman_runs = 0 AND extra_runs > 0) AS wides
+FROM balls
+GROUP BY batsman
+ORDER BY run_count DESC;
+
+-- Retrieve top 10 aggressive batsmen with minimum 500 legal deliveries
+SELECT batsman,
+       run_count,
+       tot_balls_faced - wides AS legal_balls,
+       (run_count / CAST(tot_balls_faced - wides AS float)) * 100 AS strike_rate
+FROM Aggressive_batsman
+WHERE tot_balls_faced > 500
+ORDER BY strike_rate DESC
+LIMIT 10;
+
+
+
+
+
+
+--Task2
+/*Now you need to get 2-3 players with good Average who have played more 
+the 2 ipl seasons.And to do that you have to make a list of 10 players 
+you want to bid in the auction so that when you try to grab them in 
+auction you should not pay the amount greater than you have in the 
+purse for a particular player.*/
+	
+
+CREATE TABLE "master" AS
+SELECT *
+FROM "balls"
+INNER JOIN "matches" USING (match_id);
+
+CREATE TABLE "anchor_batsman" AS
+SELECT batsman,
+       SUM(batsman_runs) AS "run_count",
+       SUM(is_wicket) AS "Dismissals",
+       (SUM(batsman_runs) / NULLIF(SUM(is_wicket), 0)) AS average,
+       COUNT(DISTINCT EXTRACT(YEAR FROM date)) AS seasons
+FROM "master"
+GROUP BY batsman
+HAVING COUNT(DISTINCT EXTRACT(YEAR FROM date)) > 2
+ORDER BY average DESC;
+
+SELECT *
+FROM "anchor_batsman"
+ORDER BY average DESC
+LIMIT 10;
+
+
+
+--Task 3
+/*Now you need to get 2-3 Hard-hitting players who have scored most runs in boundaries 
+and have played more the 2 ipl season. To do that you have to make a list of 10 players 
+you want to bid in the auction so that when you try to grab them in auction you should 
+not pay the amount greater than you have in the purse for a particular player.*/
+
+--Hardhitters 
+--STEP 1 
+CREATE TABLE "sixfours" as (SELECT batsman,
+COUNT(CASE WHEN batsman_runs >= 6 THEN 1 END) AS six_count,
+COUNT(CASE WHEN batsman_runs = 4  THEN 1 END) AS four_count,
+SUM(batsman_runs) as Totalruns,count ( distinct extract  (year from date)) as seasons 
+FROM master
+GROUP BY batsman
+ORDER BY totalruns desc);
+
+--step 2
+CREATE TABLE "boundaries" as (SELECT batsman, COUNT(*) AS boundaries
+FROM master
+WHERE batsman_runs >=  4
+GROUP BY batsman
+ORDER BY boundaries desc);
+
+
+--step 3
+CREATE TABLE "hardhitter" as (SELECT a.*,b.boundaries
+FROM sixfours AS a
+INNER JOIN boundaries AS b
+ON a.batsman = b.batsman
+group by a.batsman,a.six_count,a.four_count,a.Totalruns,b.boundaries,a.seasons
+order by Totalruns desc);
+
+select * from "hardhitter";
+
+
+SELECT *, CAST(((six_count * 6) + (four_count * 4)) AS DECIMAL)*100 / totalruns AS bound_perc
+FROM "hardhitter" where seasons >2 
+order by bound_perc desc limit 10;
+
+
+
+
+
+	
+
+
+--task 4
+/*Your first priority is to get 2-3 bowlers with good economy who have bowled at least 500 balls in IPL 
+so far.To do that you have to make a list of 10 players you want to bid in the auction so that when you 
+try to grab them in auction you should not pay the amount greater than you have in the purse for a 
+particular player.*/
+
+--STEP 1--
+select
+    bowler, ballcount,runs_conceded,
+    (runs_conceded / (floor(ballcount / 6) + (ballcount % 6) / 10)) as economy_rate,
+    floor(ballcount / 6) + (ballcount % 6) / 10 as overs_bowled
+from 
+    (select bowler, count(ball) as ballcount, sum(total_runs) as runs_conceded
+    from "balls"
+    group by bowler
+    having count(ball) >= 500)
+ as subquery
+order by economy_rate asc limit 10;
+
+--step 2
+create table "ECONOMY BOWLER LIST" as 
+(select
+    bowler, ballcount,runs_conceded,
+    (runs_conceded / (floor(ballcount / 6) + (ballcount % 6) / 10)) as economy_rate,
+    floor(ballcount / 6) + (ballcount % 6) / 10 as overs_bowled
+from 
+    (select bowler, count(ball) as ballcount, sum(total_runs) as runs_conceded
+    from "balls"
+    group by bowler
+    having count(ball) >= 500)
+ as subquery
+order by economy_rate asc limit 10);
+
+--step 3
+select * from "ECONOMY BOWLER LIST";
+
+
+
+
+--task 5
+/*Now you need to get 2-3 bowlers with the best strike rate and who have bowled at least 500 balls in 
+IPL so far.To do that you have to make a list of 10 players you want to bid in the auction so that 
+when you try to grab them in auction you should not pay the amount greater than you have in the purse 
+for a particular player.
+select bowler,
+sum(is_wicket)as total_wickets,
+(count(ball)/NULLIF(sum(is_wicket),0))*1.0 as strike_rate
+from balls
+group by bowler
+order by strike_rate*/
+
+select bowler,count(bowler) as balls,
+sum(is_wicket) as total_wicket,
+((count(bowler)/sum(is_wicket)))as strike_rate
+from balls
+group by bowler 
+having count(bowler)>500 
+order by strike_rate asc 
+limit 10;
+
+
+
+--task 6
+/*Now you need to get 2-3 All_rounders with the best batting as well as bowling strike rate and who 
+have faced at least 500 balls in IPL so far and have bowled minimum 300 balls.To do that you have to 
+make a list of 10 players you want to bid in the auction so that when you try to grab them in auction 
+you should not pay the amount greater than you have in the purse for a particular player.*/
+
+--wicket taking bowler	
+create table strike_bowler as (select bowler,
+    sum(case when dismissal_kind = 'lbw' then 1 else 0 end) as lbw_wickets,
+    sum(case when dismissal_kind = 'caught' then 1 else 0 end) as caught_wickets,
+    sum(case when dismissal_kind = 'bowled' then 1 else 0 end) as bowled_wickets,
+    sum(case when dismissal_kind = 'stumped' then 1 else 0 end) as stumped_wickets,
+	sum(case when dismissal_kind = 'hit wicket' then 1 else 0 end) as hit_wicket,
+	sum(case when dismissal_kind = 'caught and bowled' then 1 else 0 end) as caught_and_bowled,
+	count(ball)	as ball_count					   
+from master
+group by bowler
+order by caught_wickets desc, bowled_wickets desc);
+
+
+create table strikebowler as (select *,Round(cast(ball_count as decimal(10,2))/ cast(Total_wickets as decimal(5,2)),2) as strike_rate
+from
+	(select *, (lbw_wickets+caught_wickets+bowled_wickets+stumped_wickets+hit_wicket+caught_and_bowled) as Total_wickets
+from
+	 strike_bowler
+	 group by bowler,lbw_wickets,caught_wickets,bowled_wickets,stumped_wickets,ball_count,hit_wicket,caught_and_bowled
+	 having ball_count >500
+	 order by Total_wickets desc) as subquery
+order by strike_rate asc
+limit 10);
+
+
+create table strike_bowler_list as (select bowler,Total_wickets,ball_count,Round(cast(ball_count as decimal(10,2))/ cast(Total_wickets as decimal(5,2)),2) as strike_rate
+from
+	(select *, (lbw_wickets+caught_wickets+bowled_wickets+stumped_wickets+hit_wicket+caught_and_bowled) as Total_wickets
+from
+	 strike_bowler
+	 group by bowler,lbw_wickets,caught_wickets,bowled_wickets,stumped_wickets,ball_count,hit_wicket,caught_and_bowled
+	 having ball_count >500
+	 order by Total_wickets desc) as subquery
+order by strike_rate asc
+limit 10);
+
+select * from strike_bowler_list;
+
+
+
+--batting all rounder
+/*create table bowling_allrounder as (select bowler,total_wickets,Round(cast(ball_count as decimal(10,2))/ cast(Total_wickets as decimal(5,2)),2) as strike_rate
+from
+	(select *, (lbw_wickets+caught_wickets+bowled_wickets+stumped_wickets+hit_wicket+caught_and_bowled) as Total_wickets
+from
+	 strike_bowler
+	 group by bowler,lbw_wickets,caught_wickets,bowled_wickets,stumped_wickets,ball_count,hit_wicket,caught_and_bowled
+	 having ball_count >300
+	 order by Total_wickets desc) as subquery
+order by strike_rate asc
+);
+create table bat_all_roudr as(SELECT batsman AS "bat", sum(batsman_runs) AS "run_count",count(ball) as "balls_faced",
+sum(is_wicket) as "Total Dismissals", cast(sum (batsman_runs) as float)/cast(count (ball) as float)*100 as "strike_rate"
+FROM "balls"
+GROUP BY batsman
+having count(ball) >500
+order by run_count desc);
+
+SELECT bat_all_roudr.batsman AS all_rounder,
+       bat_all_roudr.run_count AS runs,
+       bat_all_roudr.strike_rate AS bat_SR,
+       bowling_allrounder.ball_count,
+       bowling_allrounder.Total_wickets,
+       bowling_allrounder.strike_rate
+FROM bat_all_roudr
+INNER JOIN bowling_allrounder ON bat_all_roudr.batsman = bowling_allrounder.bowler
+GROUP BY bat_all_roudr.batsman, runs, bat_SR, ball_count, Total_wickets, strike_rate
+ORDER BY bat_SR DESC, strike_rate ASC;
+
+
+CREATE TABLE "BAT_ALL_ROUNDER_list" AS
+SELECT bat_all_roudr.batsman AS all_rounder,
+       bat_all_roudr.run_count AS runs,
+       bat_all_roudr.strike_rate AS bat_SR,
+       bowling_allrounder.Total_wickets,
+       bowling_allrounder.strike_rate AS bow_SR
+FROM bat_all_roudr, bowling_allrounder
+WHERE bat_all_roudr.batsman = bowling_allrounder.bowler
+GROUP BY bat_all_roudr.batsman, bat_all_roudr.run_count, bat_all_roudr.strike_rate, 
+bowling_allrounder.Total_wickets, bowling_allrounder.strike_rate
+ORDER BY bat_all_roudr.strike_rate DESC, bowling_allrounder.strike_rate ASC
+LIMIT 10;
+
+
+select * from "BAT_ALL_ROUNDER_list";*/
+
+
+
+CREATE TABLE "bowling_allrounder" AS
+SELECT bowler,
+       total_wickets,
+       ROUND(CAST(ball_count AS DECIMAL(10, 2)) / CAST(Total_wickets AS DECIMAL(5, 2)), 2) AS strike_rate
+FROM (
+    SELECT *,
+           (lbw_wickets + caught_wickets + bowled_wickets + stumped_wickets + hit_wicket + caught_and_bowled) AS Total_wickets
+    FROM strike_bowler
+    GROUP BY bowler, lbw_wickets, caught_wickets, bowled_wickets, stumped_wickets, ball_count, hit_wicket, caught_and_bowled
+    HAVING ball_count > 300
+    ORDER BY Total_wickets DESC
+) AS subquery
+ORDER BY strike_rate ASC;
+
+CREATE TABLE "bat_all_roudr" AS
+SELECT batsman AS "bat",
+       SUM(batsman_runs) AS "run_count",
+       COUNT(ball) AS "balls_faced",
+       SUM(is_wicket) AS "Total Dismissals",
+       CAST(SUM(batsman_runs) AS FLOAT) / CAST(COUNT(ball) AS FLOAT) * 100 AS "strike_rate"
+FROM "balls"
+GROUP BY batsman
+HAVING COUNT(ball) > 500
+ORDER BY run_count DESC;
+
+CREATE TABLE "BAT_ALL_ROUNDER_list" AS
+SELECT bat_all_roudr.batsman AS all_rounder,
+       bat_all_roudr.run_count AS runs,
+       bat_all_roudr.strike_rate AS bat_SR,
+       bowling_allrounder.Total_wickets,
+       bowling_allrounder.strike_rate AS bow_SR
+FROM bat_all_roudr, bowling_allrounder
+WHERE bat_all_roudr.batsman = bowling_allrounder.bowler
+GROUP BY bat_all_roudr.batsman, bat_all_roudr.run_count, bat_all_roudr.strike_rate, bowling_allrounder.Total_wickets, bowling_allrounder.strike_rate
+ORDER BY bat_all_roudr.strike_rate DESC, bowling_allrounder.strike_rate ASC
+LIMIT 10;
+
+SELECT * FROM "BAT_ALL_ROUNDER_list";
+
+
+
+
+--wicket keeper
+create table wicket_keepers as (select fielder as wicket_keeper,
+								 count(dismissal_kind) as stumpings
+from master where is_wicket>0 and dismissal_kind = 'stumped' 
+group by wicket_keeper
+order by stumpings desc);
+
+create table wicket_keeper_fielding as (select a.*,b.catches
+from wicket_keepers as a
+inner join (select fielder,
+			count(case when dismissal_kind = 'caught' Then 1 else 0 End) as catches
+			from master
+			group by fielder
+			order by catches desc) as b
+on a.wicket_keeper = b.fielder
+group by a.wicket_keeper,a.stumpings,b.fielder,b.catches
+order by a.stumpings desc);
+
+select a.*,b.six_count,b.four_count,b.Totalruns,b.seasons
+from wicket_keeper_fielding as a
+inner join
+(SELECT a.*,b.boundaries
+FROM sixfours AS a
+INNER JOIN boundaries AS b
+ON a.batsman = b.batsman
+group by a.batsman,a.six_count,a.four_count,a.Totalruns,b.boundaries,a.seasons
+order by Totalruns desc) as b
+on a.wicket_keeper = b.batsman
+group by a.wicket_keeper,a.stumpings,a.catches,b.totalruns,b.six_count,b.four_count,b.seasons
+order by b.totalruns desc,a.catches desc,a.stumpings desc,b.six_count,b.four_count;
+
+create table best_WK_list as (select a.*,b.six_count,b.four_count,b.Totalruns,b.seasons
+from wicket_keeper_fielding as a
+inner join
+(SELECT a.*,b.boundaries
+FROM sixfours AS a
+INNER JOIN boundaries AS b
+ON a.batsman = b.batsman
+group by a.batsman,a.six_count,a.four_count,a.Totalruns,b.boundaries,a.seasons
+order by Totalruns desc) as b
+on a.wicket_keeper = b.batsman
+group by a.wicket_keeper,a.stumpings,a.catches,b.totalruns,b.six_count,b.four_count,b.seasons
+order by b.totalruns desc,a.catches desc,a.stumpings desc,b.six_count,b.four_count limit 10);
+
+select * from best_WK_list;
+
+
+
+--ADDITIONAL QUESTION
+--1.Get the count of cities that have hosted an IPL match
+
+select count (distinct city) from "matches";
+
+/*2.Create table deliveries_v02 with all the columns of the table ‘deliveries’ 
+and an additional column ball_result containing values boundary, dot or other 
+depending on the total_run (boundary for >= 4, dot for 0 and other for any other number)
+(Hint 1 : CASE WHEN statement is used to get condition based results)
+(Hint 2: To convert the output data of the select statement into a table, 
+you can use a subquery. Create table table_name as [entire select statement].*/
+
+CREATE TABLE deliveries_v02 AS
+SELECT
+    *,
+    CASE
+        WHEN total_runs >= 4 THEN 'boundary'
+        WHEN total_runs = 0 THEN 'dot'
+        ELSE 'other'
+    END AS ball_result
+FROM
+    deliveries;
+					   
+							   
+
+
+/*3.Write a query to fetch the total number of boundaries and dot balls from the 
+deliveries_v02 table.*/
+SELECT
+    SUM(CASE WHEN total_runs = 4 OR total_runs = 6 THEN 1 ELSE 0 END) AS total_boundaries,
+    SUM(CASE WHEN total_runs = 0 THEN 1 ELSE 0 END) AS total_dot_balls
+FROM
+    deliveries_v02;
+	
+
+/*4.Write a query to fetch the total number of boundaries scored by each team from 
+the deliveries_v02 table and order it in descending order of the number of boundaries 
+scored.*/
+
+SELECT
+    batting_team AS team,
+    SUM(CASE WHEN total_runs = 4 OR total_runs = 6 THEN 1 ELSE 0 END) AS total_boundaries
+FROM
+    deliveries_v02
+GROUP BY
+    batting_team
+ORDER BY
+    total_boundaries DESC;
+	
+	
+	
+	
+/*5.Write a query to fetch the total number of dot balls bowled by each team 
+and order it in descending order of the total number of dot balls bowled.*/	
+SELECT
+    bowling_team AS team,
+    SUM(CASE WHEN total_runs = 0 THEN 1 ELSE 0 END) AS total_dot_balls
+FROM
+    deliveries_v02
+GROUP BY
+    bowling_team
+ORDER BY
+    total_dot_balls DESC;
+
+	
+	
+/*6.
+Write a query to fetch the total number of dismissals by dismissal kinds where 
+dismissal kind is not NA */
+	
+SELECT
+    dismissal_kind,
+    COUNT(*) AS total_dismissals
+FROM
+    deliveries_v02
+WHERE
+    dismissal_kind <> 'NA'
+GROUP BY
+    dismissal_kind;
+	
+	
+	
+/*7. Write a query to get the top 5 bowlers who conceded maximum extra runs from the 
+deliveries table */
+	
+SELECT
+    bowler,
+    SUM(extra_runs) AS total_extra_runs
+FROM
+    deliveries
+GROUP BY
+    bowler
+ORDER BY
+    total_extra_runs DESC
+LIMIT 5;
+
+
+/*8.Write a query to create a table named deliveries_v03 with all the columns 
+of deliveries_v02 table and two additional column (named venue and match_date)
+of venue and date from table matches */
+CREATE TABLE deliveries_v03 AS
+SELECT
+    dv.*,
+    m.venue,
+    m.date AS match_date
+FROM
+    deliveries_v02 AS dv
+JOIN
+    matches AS m ON dv.match_id = m.match_id;
+	
+	
+	
+/*9 Write a query to fetch the total runs scored for each venue and order it in the 
+descending order of total runs scored. */
+	
+SELECT
+    venue,
+    SUM(total_runs) AS total_runs_scored
+FROM
+    deliveries_v03
+GROUP BY
+    venue
+ORDER BY
+    total_runs_scored DESC;
+	
+	
+
+
+	
+	
+/*10. Write a query to fetch the year-wise total runs scored at Eden Gardens and 
+order it in the descending order of total runs scored.*/
+	
+
+
+
+select distinct venue from deliveries_v03;
+
+select distinct extract( year from date) as year,venue as venue,sum(total_runs) as runs
+from deliveries_v03 where venue = 'Eden Gardens'
+group by year,venue
+order by runs desc;
+
+	
+
+
+	
+	
+	
+
+	
+	
+	
+	
+
+	
+
+
+
